@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knowledge Graph Explorer — Databricks POC</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; height: 100vh; }
+
+        .sidebar {
+            width: 340px; background: #1e293b; padding: 20px;
+            display: flex; flex-direction: column; gap: 16px;
+            border-right: 1px solid #334155; overflow-y: auto;
+        }
+        .sidebar h1 { font-size: 1.2rem; color: #38bdf8; }
+        .sidebar h2 { font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+
+        .query-btn {
+            background: #334155; border: 1px solid #475569; color: #e2e8f0;
+            padding: 10px 14px; border-radius: 8px; cursor: pointer;
+            text-align: left; transition: all 0.2s;
+        }
+        .query-btn:hover { background: #475569; border-color: #38bdf8; }
+        .query-btn.active { background: #0c4a6e; border-color: #38bdf8; }
+        .query-btn .desc { font-size: 0.75rem; color: #94a3b8; margin-top: 4px; }
+
+        input[type="text"] {
+            background: #0f172a; border: 1px solid #475569; color: #e2e8f0;
+            padding: 8px 12px; border-radius: 6px; width: 100%;
+        }
+
+        .stats { background: #0f172a; border-radius: 8px; padding: 12px; font-size: 0.8rem; }
+        .stats .stat-row { display: flex; justify-content: space-between; padding: 2px 0; }
+        .stats .stat-label { color: #94a3b8; }
+
+        #graph-container { flex: 1; position: relative; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 1.1rem; color: #94a3b8; display: none;
+        }
+
+        .legend {
+            position: absolute; bottom: 16px; left: 16px; background: #1e293b;
+            border: 1px solid #334155; border-radius: 8px; padding: 12px;
+            font-size: 0.75rem; z-index: 10;
+        }
+        .legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+        .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+        .node-detail {
+            position: absolute; top: 16px; right: 16px; background: #1e293b;
+            border: 1px solid #334155; border-radius: 8px; padding: 16px;
+            max-width: 300px; display: none; z-index: 10; font-size: 0.85rem;
+        }
+        .node-detail h3 { color: #38bdf8; margin-bottom: 8px; }
+        .node-detail .prop { display: flex; justify-content: space-between; padding: 2px 0; }
+        .node-detail .prop-key { color: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h1>Knowledge Graph Explorer</h1>
+        <p style="font-size: 0.8rem; color: #94a3b8;">Databricks → Neo4j POC</p>
+
+        <h2>Entity Filter</h2>
+        <input type="text" id="entity-input" placeholder="Entity name (e.g. Acme Corp)" value="Acme Corp">
+
+        <h2>Traversal Queries</h2>
+        <div id="query-list"></div>
+
+        <h2>Discovered Schema</h2>
+        <div class="stats" id="schema-panel">Loading...</div>
+
+        <h2>Graph Stats</h2>
+        <div class="stats" id="stats-panel">Loading...</div>
+    </div>
+
+    <div id="graph-container">
+        <div id="loading">Loading graph data...</div>
+        <div class="legend" id="legend"></div>
+        <div class="node-detail" id="node-detail"></div>
+    </div>
+
+    <script>
+        const COLORS = {
+            Customer: '#38bdf8', Product: '#34d399', Order: '#fbbf24',
+            Employee: '#a78bfa', Department: '#f472b6', Supplier: '#fb923c',
+        };
+
+        let network = null;
+        let activeQuery = null;
+
+        async function loadQueries() {
+            const res = await fetch('/api/queries');
+            const queries = await res.json();
+            const container = document.getElementById('query-list');
+            container.innerHTML = queries.map(q => `
+                <button class="query-btn" data-id="${q.id}" onclick="runQuery('${q.id}')">
+                    <strong>${q.name}</strong>
+                    <div class="desc">${q.description}</div>
+                </button>
+            `).join('');
+        }
+
+        async function loadSchema() {
+            try {
+                const res = await fetch('/api/schema');
+                const schema = await res.json();
+                const panel = document.getElementById('schema-panel');
+                let html = `<em>From ${schema.tables_analyzed} relational tables:</em><br>`;
+                html += `<strong>${schema.nodes.length} nodes</strong>, <strong>${schema.relationships.length} relationships</strong><br><br>`;
+                for (const n of schema.nodes) {
+                    html += `<div class="stat-row"><span class="stat-label">:${n.label}</span><span>← ${n.source_table}</span></div>`;
+                }
+                for (const r of schema.relationships) {
+                    html += `<div class="stat-row"><span class="stat-label">[:${r.type}]</span><span>${r.from_label}→${r.to_label}</span></div>`;
+                }
+                panel.innerHTML = html;
+            } catch (e) {
+                document.getElementById('schema-panel').innerHTML = 'Schema not available';
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const stats = await res.json();
+                const panel = document.getElementById('stats-panel');
+                let html = '<strong>Nodes</strong>';
+                for (const [label, count] of Object.entries(stats.nodes)) {
+                    html += `<div class="stat-row"><span class="stat-label">${label}</span><span>${count}</span></div>`;
+                }
+                html += '<br><strong>Relationships</strong>';
+                for (const [type, count] of Object.entries(stats.relationships)) {
+                    html += `<div class="stat-row"><span class="stat-label">${type}</span><span>${count}</span></div>`;
+                }
+                panel.innerHTML = html;
+
+                const legend = document.getElementById('legend');
+                legend.innerHTML = '<strong>Legend</strong>' +
+                    Object.entries(COLORS).map(([label, color]) =>
+                        `<div class="legend-item"><div class="legend-dot" style="background:${color}"></div>${label}</div>`
+                    ).join('');
+            } catch (e) {
+                document.getElementById('stats-panel').innerHTML = 'Neo4j not connected. Run sync first.';
+            }
+        }
+
+        async function runQuery(queryId) {
+            activeQuery = queryId;
+            document.querySelectorAll('.query-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector(`[data-id="${queryId}"]`)?.classList.add('active');
+
+            const entity = document.getElementById('entity-input').value;
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+
+            try {
+                let url = `/api/traverse/${queryId}`;
+                if (entity) url += `?entity_name=${encodeURIComponent(entity)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                renderGraph(data);
+            } catch (e) {
+                alert('Error: ' + e.message);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        function renderGraph(data) {
+            const nodes = new vis.DataSet(data.nodes.map(n => ({
+                id: n.id,
+                label: n.properties.name || n.properties.order_id || n.properties.product_id || n.label,
+                group: n.label,
+                title: Object.entries(n.properties).map(([k,v]) => `${k}: ${v}`).join('\n'),
+                color: COLORS[n.label] || '#94a3b8',
+                font: { color: '#e2e8f0', size: 13 },
+                shape: n.label === 'Order' ? 'diamond' : 'dot',
+                size: n.label === 'Customer' ? 25 : 18,
+            })));
+
+            const edges = new vis.DataSet(data.edges.map(e => ({
+                id: e.id,
+                from: e.source,
+                to: e.target,
+                label: e.label,
+                font: { color: '#94a3b8', size: 10, strokeWidth: 0 },
+                color: { color: '#475569', highlight: '#38bdf8' },
+                arrows: 'to',
+                smooth: { type: 'curvedCW', roundness: 0.15 },
+            })));
+
+            const container = document.getElementById('graph-container');
+            const options = {
+                physics: {
+                    barnesHut: { gravitationalConstant: -3000, springLength: 150 },
+                    stabilization: { iterations: 100 },
+                },
+                interaction: { hover: true, tooltipDelay: 100 },
+                layout: { improvedLayout: true },
+            };
+
+            if (network) network.destroy();
+            network = new vis.Network(container, { nodes, edges }, options);
+
+            network.on('click', params => {
+                const detail = document.getElementById('node-detail');
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const node = data.nodes.find(n => n.id === nodeId);
+                    if (node) {
+                        detail.style.display = 'block';
+                        detail.innerHTML = `<h3>${node.label}</h3>` +
+                            Object.entries(node.properties).map(([k,v]) =>
+                                `<div class="prop"><span class="prop-key">${k}</span><span>${v}</span></div>`
+                            ).join('');
+                    }
+                } else {
+                    detail.style.display = 'none';
+                }
+            });
+        }
+
+        loadQueries();
+        loadSchema();
+        loadStats();
+        setTimeout(() => runQuery('graph_overview'), 500);
+    </script>
+</body>
+</html>

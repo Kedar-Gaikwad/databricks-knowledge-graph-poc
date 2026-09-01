@@ -1,0 +1,11 @@
+employee_id,name,title,department_id,manager_id,hire_date
+E001,Alice Johnson,VP Engineering,D001,,2018-03-15
+E002,Bob Martinez,Director Sales,D002,E001,2019-06-01
+E003,Carol White,Senior Account Executive,D002,E002,2020-01-10
+E004,David Chen,Engineering Manager,D001,E001,2019-09-20
+E005,Eve Thompson,Account Executive,D002,E002,2021-04-05
+E006,Frank Liu,Senior Engineer,D001,E004,2020-11-18
+E007,Grace Park,Account Executive,D002,E002,2022-02-28
+E008,Henry Adams,Supply Chain Manager,D003,E001,2019-12-01
+E009,Iris Patel,Operations Specialist,D003,E008,2021-08-15
+E010,Jack Wilson,Data Engineer,D001,E004,2023-01-09

@@ -1,0 +1,7 @@
+supplier_id,name,country,rating,contact_email
+S001,TechParts Global,USA,4.8,supply@techparts.com
+S002,CloudComponents Ltd,UK,4.5,orders@cloudcomp.co.uk
+S003,AsiaHardware Co,Japan,4.7,info@asiahw.jp
+S004,SecureNet Systems,Germany,4.9,contact@securenet.de
+S005,DataFlow Inc,USA,4.6,procurement@dataflow.com
+S006,EdgeDevices Corp,Taiwan,4.4,sales@edgedev.tw

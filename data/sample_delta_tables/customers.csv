@@ -1,0 +1,9 @@
+customer_id,name,segment,region,email,annual_revenue
+C001,Acme Corp,Enterprise,North America,contact@acme.com,2500000
+C002,Globex Industries,Mid-Market,Europe,info@globex.eu,850000
+C003,Initech,Enterprise,North America,hello@initech.com,3200000
+C004,Umbrella Systems,Enterprise,Asia Pacific,apac@umbrella.com,5100000
+C005,Stark Solutions,SMB,North America,team@stark.com,120000
+C006,Wayne Enterprises,Enterprise,North America,exec@wayne.com,8900000
+C007,Oscorp,Enterprise,North America,rd@oscorp.com,4100000
+C008,Wonka Industries,Mid-Market,Europe,orders@wonka.com,670000

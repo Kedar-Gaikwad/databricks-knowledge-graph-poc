@@ -1,0 +1,6 @@
+department_id,name,budget,location
+D001,Engineering,5000000,HQ - San Francisco
+D002,Sales,3000000,HQ - San Francisco
+D003,Operations,2000000,HQ - Chicago
+D004,Marketing,1500000,HQ - New York
+D005,Finance,1000000,HQ - San Francisco

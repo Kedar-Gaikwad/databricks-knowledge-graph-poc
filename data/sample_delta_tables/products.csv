@@ -1,0 +1,11 @@
+product_id,name,category,price,sku
+P001,Cloud Analytics Suite,Software,49999.00,SKU-CAS-001
+P002,Data Pipeline Engine,Software,34999.00,SKU-DPE-002
+P003,ML Model Platform,Software,59999.00,SKU-MLP-003
+P004,Security Gateway,Hardware,12999.00,SKU-SGW-004
+P005,IoT Sensor Kit,Hardware,8999.00,SKU-ISK-005
+P006,Enterprise Storage Array,Hardware,89999.00,SKU-ESA-006
+P007,BI Dashboard Pro,Software,19999.00,SKU-BDP-007
+P008,API Gateway,Software,24999.00,SKU-AGW-008
+P009,Compliance Module,Software,44999.00,SKU-CMP-009
+P010,Edge Compute Node,Hardware,34999.00,SKU-ECN-010
