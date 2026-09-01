@@ -121,10 +121,9 @@ class SimpleBackend(GraphBackend):
                 for t, lbl, _ in self.out_edges.get(node, []):
                     if lbl == rel:
                         nxt.add(t)
-                if reverse_last and i == len(rel_types) - 1:
-                    for s, lbl, _ in self.in_edges.get(node, []):
-                        if lbl == rel:
-                            nxt.add(s)
+                for s, lbl, _ in self.in_edges.get(node, []):
+                    if lbl == rel:
+                        nxt.add(s)
             visited |= nxt
             current = nxt
         return self._subgraph(visited)

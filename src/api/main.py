@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -13,9 +13,9 @@ from relationship_discovery import discover_from_directory, schema_to_dict
 from backends.simple_backend import SimpleBackend
 from queries import TRAVERSAL_QUERIES
 
-DATA_DIR = Path(__file__).parent.parent.parent / "data" / "sample_delta_tables"
-OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
-VIS_DIR = Path(__file__).parent.parent.parent / "visualization"
+DATA_DIR = (Path(__file__).resolve().parent.parent.parent / "data" / "sample_delta_tables")
+OUTPUT_DIR = (Path(__file__).resolve().parent.parent.parent / "output")
+VIS_DIR = (Path(__file__).resolve().parent.parent.parent / "visualization")
 PORT = int(os.getenv("API_PORT", "8000"))
 
 backend = None
@@ -161,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     print(f"Starting Knowledge Graph API on http://localhost:{PORT}")
     print("No pip dependencies required for the default backend.")
-    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

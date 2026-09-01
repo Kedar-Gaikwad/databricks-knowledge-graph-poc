@@ -145,10 +145,9 @@ class NetworkXBackend(GraphBackend):
                 for _, target, data in self.graph.out_edges(node, data=True):
                     if data.get("label") == rel_type:
                         next_nodes.add(target)
-                if reverse_last and i == len(rel_types) - 1:
-                    for source, _, data in self.graph.in_edges(node, data=True):
-                        if data.get("label") == rel_type:
-                            next_nodes.add(source)
+                for source, _, data in self.graph.in_edges(node, data=True):
+                    if data.get("label") == rel_type:
+                        next_nodes.add(source)
             visited |= next_nodes
             current = next_nodes
 
