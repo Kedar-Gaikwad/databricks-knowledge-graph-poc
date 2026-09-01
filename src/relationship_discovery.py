@@ -121,6 +121,9 @@ def load_table_metadata(data_dir: Path) -> list[TableInfo]:
     return tables
 
 
+JUNCTION_TABLE_PATTERNS = ("_items", "_suppliers", "_mapping", "_bridge", "_link", "_xref")
+
+
 def discover_primary_keys(tables: list[TableInfo]) -> None:
     """Infer PKs: column named {table_singular}_id or just 'id'."""
     for table in tables:
@@ -149,10 +152,7 @@ def discover_foreign_keys(tables: list[TableInfo]) -> None:
 
     for table in tables:
         for col in table.columns:
-            if col.is_primary_key:
-                continue
-
-            # Direct PK name match: customer_id in orders → customers.customer_id
+            # FK match even when column is also this table's PK (common in junction tables)
             if col.name in pk_map:
                 ref_table, ref_col = pk_map[col.name]
                 if ref_table != table.name:
@@ -160,6 +160,9 @@ def discover_foreign_keys(tables: list[TableInfo]) -> None:
                     col.references_table = ref_table
                     col.references_column = ref_col
                     continue
+
+            if col.is_primary_key:
+                continue
 
             # Pattern match: processed_by → employees
             ref = _table_from_column(col.name, all_table_names)
@@ -175,9 +178,13 @@ def discover_foreign_keys(tables: list[TableInfo]) -> None:
 def detect_junction_tables(tables: list[TableInfo]) -> None:
     """Tables with 2+ FKs and few descriptive columns are likely junction/bridge tables."""
     for table in tables:
+        if any(pat in table.name for pat in JUNCTION_TABLE_PATTERNS):
+            table.is_junction_table = True
+            continue
         fk_cols = [c for c in table.columns if c.is_foreign_key]
         non_fk = [c for c in table.columns if not c.is_foreign_key and not c.is_primary_key]
-        if len(fk_cols) >= 2 and len(non_fk) <= 3:
+        ref_tables = {c.references_table for c in fk_cols if c.references_table}
+        if len(ref_tables) >= 2 and len(non_fk) <= 3:
             table.is_junction_table = True
 
 
@@ -288,19 +295,31 @@ def build_graph_schema(tables: list[TableInfo]) -> DiscoveredSchema:
             if not c.is_foreign_key and not c.is_primary_key
         ]
 
+        from_fk, to_fk = fk_cols[0], fk_cols[1]
         rel_type = f"{from_node.label.upper()}_TO_{to_node.label.upper()}"
+
         if "order" in table.name and "item" in table.name:
             rel_type = "CONTAINS"
+            order_fk = next((c for c in fk_cols if c.references_table == "orders"), fk_cols[0])
+            product_fk = next((c for c in fk_cols if c.references_table == "products"), fk_cols[1])
+            from_node = node_by_table[order_fk.references_table]
+            to_node = node_by_table[product_fk.references_table]
+            from_fk, to_fk = order_fk, product_fk
         elif "product" in table.name and "supplier" in table.name:
             rel_type = "SUPPLIES"
+            supplier_fk = next((c for c in fk_cols if c.references_table == "suppliers"), fk_cols[0])
+            product_fk = next((c for c in fk_cols if c.references_table == "products"), fk_cols[1])
+            from_node = node_by_table[supplier_fk.references_table]
+            to_node = node_by_table[product_fk.references_table]
+            from_fk, to_fk = supplier_fk, product_fk
 
         relationships.append(DiscoveredRelationship(
             type=rel_type,
             source_table=table.name,
             from_label=from_node.label,
-            from_id_column=fk_cols[0].name,
+            from_id_column=from_fk.name,
             to_label=to_node.label,
-            to_id_column=fk_cols[1].name,
+            to_id_column=to_fk.name,
             property_columns=extra_props,
             discovery_method="junction_table",
         ))

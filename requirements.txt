@@ -1,6 +1,13 @@
-neo4j==5.26.0
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-pydantic==2.10.4
-python-dotenv==1.0.1
-networkx==3.4.2
+# Core POC — zero dependencies (uses Python stdlib only)
+# Works on Python 3.10+ including 3.14
+
+# Optional: in-memory graph with richer algorithms
+# networkx>=3.0
+
+# Optional: Neo4j backend (requires Docker: docker compose up -d)
+# neo4j>=5.0
+
+# Optional: FastAPI server (requires Python 3.11-3.13 with pre-built wheels)
+# fastapi>=0.115
+# uvicorn[standard]>=0.34
+# pydantic>=2.10

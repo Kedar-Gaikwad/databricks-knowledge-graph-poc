@@ -24,7 +24,7 @@ OUTPUT_DIR = Path(__file__).parent.parent / "output"
 
 def main():
     parser = argparse.ArgumentParser(description="Discover and build knowledge graph from relational data")
-    parser.add_argument("--backend", choices=["networkx", "neo4j"], default="networkx")
+    parser.add_argument("--backend", choices=["simple", "networkx", "neo4j"], default="simple")
     parser.add_argument("--export-only", action="store_true", help="Only export schema configs, don't load graph")
     parser.add_argument("--data-dir", default=str(DATA_DIR))
     args = parser.parse_args()
@@ -74,12 +74,20 @@ def main():
     print(f"STEP 3: Materializing graph into {args.backend}")
     print("=" * 60)
 
-    if args.backend == "networkx":
-        from backends.networkx_backend import NetworkXBackend
-        backend = NetworkXBackend()
-    else:
+    if args.backend == "neo4j":
         from backends.neo4j_backend import Neo4jBackend
         backend = Neo4jBackend()
+    elif args.backend == "networkx":
+        try:
+            from backends.networkx_backend import NetworkXBackend
+            backend = NetworkXBackend()
+        except ImportError:
+            print("  networkx not installed, falling back to simple backend")
+            from backends.simple_backend import SimpleBackend
+            backend = SimpleBackend()
+    else:
+        from backends.simple_backend import SimpleBackend
+        backend = SimpleBackend()
 
     backend.load_schema(schema, args.data_dir)
     stats = backend.get_stats()

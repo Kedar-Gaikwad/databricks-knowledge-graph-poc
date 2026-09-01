@@ -66,28 +66,30 @@ See [docs/partner-evaluation.md](docs/partner-evaluation.md) for full comparison
 
 ## Quick Start
 
-### Option A: No Docker (NetworkX — fastest)
+### Option A: No install needed (recommended)
 
 ```bash
 cd databricks-knowledge-graph-poc
-pip install -r requirements.txt
 
 # 1. Discover relationships from relational tables
 python src/discover_and_build.py
 
-# 2. Start the API + graph explorer
+# 2. Start the API + graph explorer (stdlib only, no pip install)
 python src/api/main.py
 ```
 
 Open http://localhost:8000
 
+> **Note:** The default backend uses pure Python — no `pip install` required.
+> Python 3.14 is supported. If you previously hit `pydantic-core` build errors, you can skip `pip install` entirely.
+
 ### Option B: With Neo4j (production-like)
 
 ```bash
 docker compose up -d          # Start Neo4j
-pip install -r requirements.txt
+pip install neo4j             # Only if using Neo4j backend
 python src/discover_and_build.py --backend neo4j
-python src/api/main.py --backend neo4j
+python src/api/main.py
 ```
 
 - Neo4j Browser: http://localhost:7474 (neo4j / knowledgegraph123)

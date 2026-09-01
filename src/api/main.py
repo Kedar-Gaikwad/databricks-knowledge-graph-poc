@@ -1,34 +1,38 @@
-"""FastAPI service — graph traversal over auto-discovered relational schema."""
+"""HTTP API server using Python stdlib only — no FastAPI/pydantic required."""
 
 import json
 import os
 import sys
-from contextlib import asynccontextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from relationship_discovery import discover_from_directory, schema_to_dict
-from backends.networkx_backend import NetworkXBackend
+from backends.simple_backend import SimpleBackend
 from queries import TRAVERSAL_QUERIES
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data" / "sample_delta_tables"
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
 VIS_DIR = Path(__file__).parent.parent.parent / "visualization"
+PORT = int(os.getenv("API_PORT", "8000"))
 
 backend = None
 discovered_schema = None
 
 
-def _init_backend(backend_name: str):
+def get_backend():
     global backend, discovered_schema
+    if backend is not None:
+        return backend
+
     discovered_schema = discover_from_directory(DATA_DIR)
+    backend_name = os.getenv("GRAPH_BACKEND", "simple")
+    config_path = OUTPUT_DIR / "active_backend.json"
+    if config_path.exists():
+        with open(config_path) as f:
+            backend_name = json.load(f).get("backend", backend_name)
 
     if backend_name == "neo4j":
         try:
@@ -36,172 +40,129 @@ def _init_backend(backend_name: str):
             backend = Neo4jBackend()
             backend.driver.verify_connectivity()
             backend.load_schema(discovered_schema, str(DATA_DIR))
+            return backend
         except Exception:
-            print("Neo4j not available, falling back to NetworkX")
+            print("Neo4j unavailable, using simple in-memory backend")
+
+    if backend_name == "networkx":
+        try:
+            from backends.networkx_backend import NetworkXBackend
             backend = NetworkXBackend()
             backend.load_schema(discovered_schema, str(DATA_DIR))
-    else:
-        backend = NetworkXBackend()
-        backend.load_schema(discovered_schema, str(DATA_DIR))
+            return backend
+        except ImportError:
+            print("networkx not installed, using simple in-memory backend")
+
+    backend = SimpleBackend()
+    backend.load_schema(discovered_schema, str(DATA_DIR))
+    return backend
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    backend_name = os.getenv("GRAPH_BACKEND", "networkx")
-    config_path = OUTPUT_DIR / "active_backend.json"
-    if config_path.exists():
-        with open(config_path) as f:
-            backend_name = json.load(f).get("backend", backend_name)
-    _init_backend(backend_name)
-    yield
+def graph_to_dict(data):
+    return {
+        "nodes": [{"id": n.id, "label": n.label, "properties": n.properties} for n in data.nodes],
+        "edges": [{"id": e.id, "source": e.source, "target": e.target,
+                    "label": e.label, "properties": e.properties} for e in data.edges],
+        "backend": backend.name,
+        "query_language": backend.query_language,
+    }
 
 
-app = FastAPI(
-    title="Databricks Knowledge Graph API",
-    description="Relational data → discovered relationships → traversable graph",
-    version="0.2.0",
-    lifespan=lifespan,
-)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-app.mount("/static", StaticFiles(directory=str(VIS_DIR)), name="static")
+NX_QUERY_MAP = {
+    "customer_products": "customer_products",
+    "customer_supply_chain": "supply_chain",
+    "simple_neighborhood": "neighborhood",
+    "graph_overview": "full",
+    "org_hierarchy": "full",
+    "employee_orders": "neighborhood",
+    "supplier_products": "supply_chain",
+    "cross_department": "full",
+}
 
 
-class GraphNodeOut(BaseModel):
-    id: str
-    label: str
-    properties: dict
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        print(f"[{self.log_date_time_string()}] {args[0]}")
+
+    def _json(self, data, status=200):
+        body = json.dumps(data, default=str).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _file(self, path: Path, content_type="text/html"):
+        if not path.exists():
+            self.send_error(404)
+            return
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        get_backend()
+        parsed = urlparse(self.path)
+        path = parsed.path
+        params = parse_qs(parsed.query)
+
+        if path in ("/", "/index.html"):
+            return self._file(VIS_DIR / "index.html")
+
+        if path == "/health":
+            return self._json({"status": "healthy", "backend": backend.name})
+
+        if path == "/api/schema":
+            return self._json(schema_to_dict(discovered_schema))
+
+        if path == "/api/stats":
+            stats = backend.get_stats()
+            return self._json({**stats, "backend": backend.name, "query_language": backend.query_language})
+
+        if path == "/api/queries":
+            return self._json([
+                {"id": k, "name": v["name"], "description": v["description"]}
+                for k, v in TRAVERSAL_QUERIES.items() if not v.get("requires_apoc")
+            ])
+
+        if path == "/api/platforms":
+            return self._json([
+                {"name": "Neo4j", "query_language": "Cypher", "data_movement": "Optional (Virtual Graph)"},
+                {"name": "Stardog", "query_language": "SPARQL", "data_movement": "None (Partner Connect)"},
+                {"name": "PuppyGraph", "query_language": "openCypher", "data_movement": "None (zero-ETL)"},
+                {"name": "OntoBricks", "query_language": "GraphQL", "data_movement": "Materializes to Delta"},
+            ])
+
+        if path.startswith("/api/traverse/"):
+            query_id = path.split("/api/traverse/")[1]
+            if query_id not in TRAVERSAL_QUERIES:
+                return self._json({"error": f"Query '{query_id}' not found"}, 404)
+
+            query_def = TRAVERSAL_QUERIES[query_id]
+            qparams = dict(query_def.get("params", {}))
+            if "entity_name" in params:
+                qparams["entity_name"] = params["entity_name"][0]
+
+            if backend.name == "neo4j":
+                data = backend.query(query_def["cypher"], qparams)
+            else:
+                qtype = NX_QUERY_MAP.get(query_id, "neighborhood")
+                data = backend.query(qtype, qparams)
+
+            return self._json(graph_to_dict(data))
+
+        self.send_error(404)
 
 
-class GraphEdgeOut(BaseModel):
-    id: str
-    source: str
-    target: str
-    label: str
-    properties: dict
-
-
-class GraphResponse(BaseModel):
-    nodes: list[GraphNodeOut]
-    edges: list[GraphEdgeOut]
-    backend: str
-    query_language: str
-
-
-def _to_response(data) -> GraphResponse:
-    return GraphResponse(
-        nodes=[GraphNodeOut(**n.__dict__) for n in data.nodes],
-        edges=[GraphEdgeOut(**e.__dict__) for e in data.edges],
-        backend=backend.name,
-        query_language=backend.query_language,
-    )
-
-
-@app.get("/")
-async def root():
-    return FileResponse(str(VIS_DIR / "index.html"))
-
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy", "backend": backend.name}
-
-
-@app.get("/api/schema")
-async def get_discovered_schema():
-    """Return the auto-discovered graph schema from relational tables."""
-    return schema_to_dict(discovered_schema)
-
-
-@app.get("/api/platforms")
-async def list_platforms():
-    """Available graph platform options and their integration patterns."""
-    return [
-        {
-            "name": "Neo4j",
-            "type": "graph_database",
-            "databricks_integration": "Official partner — Spark Connector + Virtual Graph (zero-copy)",
-            "query_language": "Cypher",
-            "data_movement": "Optional — Virtual Graph queries Databricks directly",
-            "best_for": "Production graph traversal, GraphRAG, multi-hop queries",
-        },
-        {
-            "name": "Stardog",
-            "type": "semantic_knowledge_graph",
-            "databricks_integration": "Partner Connect (one-click SQL warehouse setup)",
-            "query_language": "SPARQL, GraphQL",
-            "data_movement": "None — virtual semantic layer over SQL",
-            "best_for": "Ontology-driven enterprises, semantic reasoning",
-        },
-        {
-            "name": "PuppyGraph",
-            "type": "graph_query_engine",
-            "databricks_integration": "Unity Catalog partner — JSON schema mapping",
-            "query_language": "Gremlin, openCypher",
-            "data_movement": "None — zero-ETL graph over existing tables",
-            "best_for": "Graph queries without managing a graph database",
-        },
-        {
-            "name": "OntoBricks",
-            "type": "knowledge_graph_platform",
-            "databricks_integration": "Databricks Labs — native Unity Catalog integration",
-            "query_language": "GraphQL, SPARQL",
-            "data_movement": "Materializes triples to Delta/Lakebase",
-            "best_for": "Stay fully within Databricks ecosystem",
-        },
-        {
-            "name": "NetworkX",
-            "type": "in_memory_graph",
-            "databricks_integration": "N/A — local POC only",
-            "query_language": "Python",
-            "data_movement": "Loads from CSV/Delta export",
-            "best_for": "Quick POC demonstration",
-        },
-    ]
-
-
-@app.get("/api/queries")
-async def list_queries():
-    return [
-        {"id": k, "name": v["name"], "description": v["description"]}
-        for k, v in TRAVERSAL_QUERIES.items()
-        if not v.get("requires_apoc")
-    ]
-
-
-@app.get("/api/traverse/{query_id}", response_model=GraphResponse)
-async def traverse(query_id: str, entity_name: str = Query(default=None)):
-    if query_id not in TRAVERSAL_QUERIES:
-        raise HTTPException(404, f"Query '{query_id}' not found")
-
-    query_def = TRAVERSAL_QUERIES[query_id]
-    params = dict(query_def.get("params", {}))
-    if entity_name:
-        params["entity_name"] = entity_name
-
-    if backend.name == "neo4j":
-        data = backend.query(query_def["cypher"], params)
-    else:
-        nx_query_map = {
-            "customer_products": "customer_products",
-            "customer_supply_chain": "supply_chain",
-            "simple_neighborhood": "neighborhood",
-            "graph_overview": "full",
-            "org_hierarchy": "full",
-            "employee_orders": "neighborhood",
-            "supplier_products": "supply_chain",
-            "cross_department": "full",
-        }
-        data = backend.query(nx_query_map.get(query_id, "neighborhood"), params)
-
-    return _to_response(data)
-
-
-@app.get("/api/stats")
-async def graph_stats():
-    stats = backend.get_stats()
-    return {**stats, "backend": backend.name, "query_language": backend.query_language}
+def main():
+    print(f"Starting Knowledge Graph API on http://localhost:{PORT}")
+    print("No pip dependencies required for the default backend.")
+    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()
